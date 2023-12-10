@@ -6,10 +6,11 @@ use crate::arithmetic::{adc, mac, sbb, BaseExt, FieldExt, Group};
 use core::convert::TryInto;
 use core::fmt;
 use core::ops::{Add, Mul, Neg, Sub};
-use ff::PrimeField;
+use ff::{PrimeField, FromUniformBytes};
 use rand::RngCore;
 use std::io::{self, Read, Write};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
+use crate::impl_sum_prod;
 
 #[derive(Clone, Copy, Eq)]
 pub struct Fq(pub(crate) [u64; 4]);
@@ -60,10 +61,43 @@ pub const NEGATIVE_ONE: Fq = Fq([
 const BASEEXT_MODULUS: &'static str =
     "0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47";
 
-const TWO_INV: Fq = Fq::from_raw([0, 0, 0, 0]);
-const ROOT_OF_UNITY_INV: Fq = Fq::from_raw([0, 0, 0, 0]);
-const DELTA: Fq = Fq::from_raw([0, 0, 0, 0]);
-const ZETA: Fq = Fq::from_raw([0, 0, 0, 0]);
+/// Obtained with:
+/// `sage: GF(0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47).primitive_element()`
+const MULTIPLICATIVE_GENERATOR: Fq = Fq::from_raw([0x03, 0x0, 0x0, 0x0]);
+
+const TWO_INV: Fq = Fq::from_raw([
+    0x9e10460b6c3e7ea4,
+    0xcbc0b548b438e546,
+    0xdc2822db40c0ac2e,
+    0x183227397098d014,
+]);
+
+/// `0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd46`
+const ROOT_OF_UNITY: Fq = Fq::from_raw([
+    0x3c208c16d87cfd46,
+    0x97816a916871ca8d,
+    0xb85045b68181585d,
+    0x30644e72e131a029,
+]);
+
+/// `0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd46`
+const ROOT_OF_UNITY_INV: Fq = Fq::from_raw([
+    0x3c208c16d87cfd46,
+    0x97816a916871ca8d,
+    0xb85045b68181585d,
+    0x30644e72e131a029,
+]);
+
+// `0x9`
+const DELTA: Fq = Fq::from_raw([0x9, 0, 0, 0]);
+
+/// `ZETA^3 = 1 mod r` where `ZETA^2 != 1 mod r`
+const ZETA: Fq = Fq::from_raw([
+    0xe4bd44e5607cfd48,
+    0xc28f069fbb966e3d,
+    0x5e6dd9e7e0acccb0,
+    0x30644e72e131a029,
+]);
 
 impl_binops_additive!(Fq, Fq);
 impl_binops_multiplicative!(Fq, Fq);
@@ -139,7 +173,7 @@ impl Fq {
             0xdc2822db40c0ac2eu64,
             0x183227397098d014u64,
         ];
-        let s = self.pow(s);
+        let s = self.pow_ext(s);
         if s == Self::zero() {
             LegendreSymbol::Zero
         } else if s == Self::one() {
@@ -153,24 +187,17 @@ impl Fq {
 #[cfg(all(feature = "asm", target_arch = "x86_64"))]
 assembly_field!(Fq, MODULUS, INV);
 
+impl_sum_prod!(Fq);
+
 impl ff::Field for Fq {
+    const ZERO: Self = Self::zero();
+    const ONE: Self = Self::one();
+
     fn random(mut rng: impl RngCore) -> Self {
         let mut random_bytes = [0; 64];
         rng.fill_bytes(&mut random_bytes[..]);
 
-        Self::from_bytes_wide(&random_bytes)
-    }
-
-    fn zero() -> Self {
-        Self::zero()
-    }
-
-    fn one() -> Self {
-        Self::one()
-    }
-
-    fn is_zero(&self) -> Choice {
-        self.ct_is_zero()
+        Self::from_uniform_bytes(&random_bytes)
     }
 
     fn double(&self) -> Self {
@@ -184,7 +211,7 @@ impl ff::Field for Fq {
 
     /// Computes the square root of this element, if it exists.
     fn sqrt(&self) -> CtOption<Self> {
-        let tmp = self.pow(&[
+        let tmp = self.pow([
             0x4f082305b61f3f52,
             0x65e05aa45a1c72a3,
             0x6e14116da0605617,
@@ -194,17 +221,14 @@ impl ff::Field for Fq {
         CtOption::new(tmp, tmp.square().ct_eq(self))
     }
 
-    /// Computes the multiplicative inverse of this element,
-    /// failing if the element is zero.
-    fn invert(&self) -> CtOption<Self> {
-        let tmp = self.pow(&[
-            0x3c208c16d87cfd45,
-            0x97816a916871ca8d,
-            0xb85045b68181585d,
-            0x30644e72e131a029,
-        ]);
+    fn sqrt_ratio(num: &Self, div: &Self) -> (Choice, Self) {
+        ff::helpers::sqrt_ratio_generic(num, div)
+    }
 
-        CtOption::new(tmp, !self.ct_eq(&Self::zero()))
+    /// Returns the multiplicative inverse of the
+    /// element. If it is zero, the method fails.
+    fn invert(&self) -> CtOption<Self> {
+        unimplemented!()
     }
 }
 
@@ -213,7 +237,12 @@ impl ff::PrimeField for Fq {
 
     const NUM_BITS: u32 = 254;
     const CAPACITY: u32 = 253;
-
+    const MODULUS: &'static str = BASEEXT_MODULUS;
+    const MULTIPLICATIVE_GENERATOR: Self = MULTIPLICATIVE_GENERATOR;
+    const ROOT_OF_UNITY: Self = ROOT_OF_UNITY;
+    const ROOT_OF_UNITY_INV: Self = ROOT_OF_UNITY_INV;
+    const TWO_INV: Self = TWO_INV;
+    const DELTA: Self = DELTA;
     const S: u32 = 0;
 
     fn from_repr(repr: Self::Repr) -> CtOption<Self> {
@@ -264,16 +293,24 @@ impl ff::PrimeField for Fq {
     fn is_odd(&self) -> Choice {
         Choice::from(self.to_repr()[0] & 1)
     }
-
-    fn multiplicative_generator() -> Self {
-        unimplemented!()
-    }
-
-    fn root_of_unity() -> Self {
-        unimplemented!()
-    }
 }
 
+impl FromUniformBytes<64> for Fq {
+    /// Converts a 512-bit little endian integer into
+    /// an `Fq` by reducing by the modulus.
+    fn from_uniform_bytes(bytes: &[u8; 64]) -> Self {
+        Self::from_u512([
+            u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+            u64::from_le_bytes(bytes[8..16].try_into().unwrap()),
+            u64::from_le_bytes(bytes[16..24].try_into().unwrap()),
+            u64::from_le_bytes(bytes[24..32].try_into().unwrap()),
+            u64::from_le_bytes(bytes[32..40].try_into().unwrap()),
+            u64::from_le_bytes(bytes[40..48].try_into().unwrap()),
+            u64::from_le_bytes(bytes[48..56].try_into().unwrap()),
+            u64::from_le_bytes(bytes[56..64].try_into().unwrap()),
+        ])
+    }
+}
 
 #[cfg(feature = "gpu")]
 impl ec_gpu::GpuName for Fq {

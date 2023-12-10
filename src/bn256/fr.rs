@@ -10,6 +10,7 @@ use ff::PrimeField;
 use rand::RngCore;
 use std::io::{self, Read, Write};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
+use crate::impl_sum_prod;
 
 #[derive(Clone, Copy, Eq, Hash)]
 pub struct Fr(pub(crate) [u64; 4]);
@@ -117,8 +118,12 @@ impl Fr {
 
 #[cfg(all(feature = "asm", target_arch = "x86_64"))]
 assembly_field!(Fr, MODULUS, INV);
+impl_sum_prod!(Fr);
 
 impl ff::Field for Fr {
+    const ZERO: Self = Self::zero();
+    const ONE: Self = Self::one();
+
     fn random(mut rng: impl RngCore) -> Self {
         Self::from_u512([
             rng.next_u64(),
@@ -132,18 +137,6 @@ impl ff::Field for Fr {
         ])
     }
 
-    fn zero() -> Self {
-        Self::zero()
-    }
-
-    fn one() -> Self {
-        Self::one()
-    }
-
-    fn is_zero(&self) -> Choice {
-        self.ct_is_zero()
-    }
-
     fn double(&self) -> Self {
         self.double()
     }
@@ -153,13 +146,8 @@ impl ff::Field for Fr {
         self.square()
     }
 
-    /// Computes the square root of this element, if it exists.
-    fn sqrt(&self) -> CtOption<Self> {
-        unimplemented!()
-    }
-
-    /// Computes the multiplicative inverse of this element,
-    /// failing if the element is zero.
+    /// Returns the multiplicative inverse of the
+    /// element. If it is zero, the method fails.
     fn invert(&self) -> CtOption<Self> {
         let tmp = self.pow(&[
             0x43e1f593efffffff,
@@ -170,6 +158,21 @@ impl ff::Field for Fr {
 
         CtOption::new(tmp, !self.ct_eq(&Self::zero()))
     }
+
+    fn sqrt(&self) -> CtOption<Self> {
+        /// `(t - 1) // 2` where t * 2^s + 1 = p with t odd.
+        const T_MINUS1_OVER2: [u64; 4] = [
+            0xcdcb848a1f0fac9f,
+            0x0c0ac2e9419f4243,
+            0x098d014dc2822db4,
+            0x0000000183227397,
+        ];
+        ff::helpers::sqrt_tonelli_shanks(self, T_MINUS1_OVER2)
+    }
+
+    fn sqrt_ratio(num: &Self, div: &Self) -> (Choice, Self) {
+        ff::helpers::sqrt_ratio_generic(num, div)
+    }
 }
 
 impl ff::PrimeField for Fr {
@@ -177,6 +180,12 @@ impl ff::PrimeField for Fr {
 
     const NUM_BITS: u32 = 254;
     const CAPACITY: u32 = 253;
+    const MODULUS: &'static str = BASEEXT_MODULUS;
+    const MULTIPLICATIVE_GENERATOR: Self = GENERATOR;
+    const ROOT_OF_UNITY: Self = ROOT_OF_UNITY;
+    const ROOT_OF_UNITY_INV: Self = ROOT_OF_UNITY_INV;
+    const TWO_INV: Self = TWO_INV;
+    const DELTA: Self = DELTA;
     const S: u32 = S;
 
     fn from_repr(repr: Self::Repr) -> CtOption<Self> {
@@ -225,14 +234,6 @@ impl ff::PrimeField for Fr {
 
     fn is_odd(&self) -> Choice {
         Choice::from(self.to_repr()[0] & 1)
-    }
-
-    fn multiplicative_generator() -> Self {
-        GENERATOR
-    }
-
-    fn root_of_unity() -> Self {
-        ROOT_OF_UNITY
     }
 }
 

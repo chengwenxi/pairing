@@ -479,7 +479,7 @@ macro_rules! new_curve_impl {
                 $name {
                     x: self.x,
                     y: self.y,
-                    z: $base::conditional_select(&$base::one(), &$base::zero(), self.is_identity()),
+                    z: $base::conditional_select(&$base::ONE, &$base::ZERO, self.is_identity()),
                 }
             }
         }
@@ -584,7 +584,7 @@ macro_rules! new_curve_impl {
                 // - y_3 = lambda * (x_1 - x_3) - y_1
 
                 // Batch invert accumulator
-                let mut acc = Self::Base::one();
+                let mut acc = Self::Base::ONE;
 
                 for i in (0..num_points).step_by(2) {
                     // Where that result of the point addition will be stored

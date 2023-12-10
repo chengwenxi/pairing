@@ -3,11 +3,12 @@ use super::LegendreSymbol;
 use crate::arithmetic::BaseExt;
 use core::convert::TryInto;
 use core::ops::{Add, Mul, Neg, Sub};
-use ff::Field;
+use ff::{Field, PrimeField};
 use rand::RngCore;
 use std::cmp::Ordering;
 use std::io::{self, Read, Write};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
+use crate::impl_sum_prod;
 
 /// An element of Fq2, represented by c0 + c1 * u.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -15,6 +16,8 @@ pub struct Fq2 {
     pub c0: Fq,
     pub c1: Fq,
 }
+
+impl_sum_prod!(Fq2);
 
 /// `Fq2` elements are ordered lexicographically.
 impl Ord for Fq2 {
@@ -118,9 +121,30 @@ impl_binops_additive!(Fq2, Fq2);
 impl_binops_multiplicative!(Fq2, Fq2);
 
 impl Fq2 {
+    #[inline]
+    pub const fn zero() -> Fq2 {
+        Fq2 {
+            c0: Fq::zero(),
+            c1: Fq::zero(),
+        }
+    }
+
+    #[inline]
+    pub const fn one() -> Fq2 {
+        Fq2 {
+            c0: Fq::one(),
+            c1: Fq::zero(),
+        }
+    }
+
+    pub const fn new(c0: Fq, c1: Fq) -> Self {
+        Fq2 { c0, c1 }
+    }
+
     pub const fn size() -> usize {
         64
     }
+    
     /// Attempts to convert a little-endian byte representation of
     /// a scalar into a `Fq`, failing if the input is not canonical.
     pub fn from_bytes(bytes: &[u8; 64]) -> CtOption<Fq2> {
@@ -300,24 +324,13 @@ impl Fq2 {
 }
 
 impl Field for Fq2 {
+    const ZERO: Self = Self::zero();
+    const ONE: Self = Self::one();
+
     fn random(mut rng: impl RngCore) -> Self {
         Fq2 {
             c0: Fq::random(&mut rng),
             c1: Fq::random(&mut rng),
-        }
-    }
-
-    fn zero() -> Self {
-        Fq2 {
-            c0: Fq::zero(),
-            c1: Fq::zero(),
-        }
-    }
-
-    fn one() -> Self {
-        Fq2 {
-            c0: Fq::one(),
-            c1: Fq::zero(),
         }
     }
 
@@ -337,7 +350,7 @@ impl Field for Fq2 {
         // Algorithm 9, https://eprint.iacr.org/2012/685.pdf
 
         if self.is_zero().into() {
-            CtOption::new(Self::zero(), Choice::from(1))
+            CtOption::new(Self::ZERO, Choice::from(1))
         } else {
             // a1 = self^((q - 3) / 4)
             // 0xc19139cb84c680a6e14116da060561765e05aa45a1c72a34f082305b61f3f51
@@ -347,7 +360,7 @@ impl Field for Fq2 {
                 0x6e14116da0605617,
                 0x0c19139cb84c680a,
             ];
-            let mut a1 = self.pow(&u);
+            let mut a1 = self.pow(u);
             let mut alpha = a1;
 
             alpha.square_assign();
@@ -372,7 +385,7 @@ impl Field for Fq2 {
                         c1: Fq::one(),
                     });
                 } else {
-                    alpha += &Fq2::one();
+                    alpha += &Fq2::ONE;
                     // alpha = alpha^((q - 1) / 2)
                     // 0x183227397098d014dc2822db40c0ac2ecbc0b548b438e5469e10460b6c3e7ea3
                     let u: [u64; 4] = [
@@ -381,7 +394,7 @@ impl Field for Fq2 {
                         0xdc2822db40c0ac2e,
                         0x183227397098d014,
                     ];
-                    alpha = alpha.pow(&u);
+                    alpha = alpha.pow(u);
                     a1.mul_assign(&alpha);
                 }
                 CtOption::new(a1, Choice::from(1))
@@ -389,8 +402,90 @@ impl Field for Fq2 {
         }
     }
 
+    fn sqrt_ratio(num: &Self, div: &Self) -> (Choice, Self) {
+        ff::helpers::sqrt_ratio_generic(num, div)
+    }
+
     fn invert(&self) -> CtOption<Self> {
         self.invert()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Fq2Bytes([u8; 64]);
+
+impl Default for Fq2Bytes {
+    fn default() -> Self {
+        Self([0u8; 64])
+    }
+}
+
+impl AsMut<[u8]> for Fq2Bytes {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl AsRef<[u8]> for Fq2Bytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<u64> for Fq2 {
+    fn from(val: u64) -> Self {
+        Fq2 {
+            c0: Fq::from(val),
+            c1: Fq::zero(),
+        }
+    }
+}
+
+impl PrimeField for Fq2 {
+    type Repr = Fq2Bytes;
+
+    const MODULUS: &'static str =
+        "0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47";
+    const MULTIPLICATIVE_GENERATOR: Self = Fq2 {
+        c0: Fq::from_raw([0x03, 0x0, 0x0, 0x0]),
+        c1: Fq::ZERO,
+    };
+    const NUM_BITS: u32 = 254;
+    const CAPACITY: u32 = 253;
+    const S: u32 = 0;
+    // TODO: Check that we can just 0 this and forget.
+    const ROOT_OF_UNITY: Self = Fq2::zero();
+    const ROOT_OF_UNITY_INV: Self = Fq2 {
+        c0: Fq::zero(),
+        c1: Fq::zero(),
+    };
+    const DELTA: Self = Fq2 {
+        c0: Fq::zero(),
+        c1: Fq::zero(),
+    };
+    const TWO_INV: Self = Fq2 {
+        c0: Fq::from_raw([
+            0x9e10460b6c3e7ea4,
+            0xcbc0b548b438e546,
+            0xdc2822db40c0ac2e,
+            0x183227397098d014,
+        ]),
+        c1: Fq([0, 0, 0, 0]),
+    };
+
+    fn from_repr(repr: Self::Repr) -> CtOption<Self> {
+        let c0 = Fq::from_bytes(&repr.0[..32].try_into().unwrap());
+        let c1 = Fq::from_bytes(&repr.0[32..].try_into().unwrap());
+        // Disallow overflow representation
+        CtOption::new(Fq2::new(c0.unwrap(), c1.unwrap()), Choice::from(1))
+    }
+
+    fn to_repr(&self) -> Self::Repr {
+        Fq2Bytes(self.to_bytes())
+    }
+
+    fn is_odd(&self) -> Choice {
+        Choice::from(self.to_repr().as_ref()[0] & 1)
     }
 }
 

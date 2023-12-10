@@ -23,7 +23,7 @@ pub trait BaseExt: ff::Field + Ord + ConstantTimeEq {
 
     /// Returns whether or not this element is zero.
     fn ct_is_zero(&self) -> Choice {
-        self.ct_eq(&Self::zero())
+        self.ct_eq(&Self::ZERO)
     }
 
     /// Obtains a field element that is congruent to the provided little endian
@@ -39,8 +39,8 @@ pub trait BaseExt: ff::Field + Ord + ConstantTimeEq {
 
     /// Exponentiates `self` by `by`, where `by` is a little-endian order
     /// integer exponent.
-    fn pow(&self, by: &[u64; 4]) -> Self {
-        let mut res = Self::one();
+    fn pow_ext(&self, by: &[u64; 4]) -> Self {
+        let mut res = Self::ONE;
         for e in by.iter().rev() {
             for i in (0..64).rev() {
                 res = res.square();
